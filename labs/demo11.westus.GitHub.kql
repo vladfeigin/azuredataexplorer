@@ -1,0 +1,178 @@
+﻿#connect cluster('https://demo11.westus.kusto.windows.net').database('GitHub')
+
+ 
+// ~5.5 Billion event records since Jan 2016
+//Intelissence is built in - easy
+EventsAll
+| count
+
+//SQL works as well
+// use explain to translate to KQL
+EXPLAIN 
+SELECT COUNT_BIG(*) as Count FROM EventsAll
+
+// all is started at 2016 ... we have the data from 2016 till now with freshness of 5 min
+EventsAll
+| summarize TotalEvents = count(), StartDate = min(CreatedAt), EndDate = max(CreatedAt)
+| extend Freshness = now() - EndDate
+
+//events tables size - 18.2 TB of GitHub events!
+.show database GitHub extents
+| where TableName in ("GithubEvent", "EventsFromLiveStream")
+| summarize TotalDataSize=sum(OriginalSize)
+| extend DataSize_inTB = format_bytes(TotalDataSize, 2)
+
+//extents = shards
+.show database GitHub extents
+| count 
+
+// Count all events received in the past 24 hours
+EventsAll
+| where CreatedAt > ago(24h)
+| count 
+
+
+//Count all PushEvent in the last day
+EventsAll
+| where  CreatedAt > ago(1d) 
+| where Type == 'PushEvent'
+| count
+
+//
+EventsAll
+|where  CreatedAt between (datetime(2022-09-01) .. now())
+|count 
+
+
+//======================================== AGGREGATIONS ==================================================
+//summarize
+
+EventsAll
+| summarize count() by Type 
+| sort by count_ 
+| render  barchart 
+
+//the same as before with a variable
+EventsAll
+| summarize groupbytype = count() by Type 
+| sort by groupbytype
+| render  piechart 
+
+
+//let's see the table schema. Repo column type is "dynamic" - semi-structured / json data
+// Kusto works very well with this kind of data, which is very common use case
+
+EventsAll
+| getschema 
+
+
+//project specific columns from the original table
+EventsAll
+| project Repo,Payload
+| take 5
+
+
+//looks somewhere in json object (Repo) for a specic repo name. We use here '.' dot notation to access internal fields
+EventsAll
+| where CreatedAt > ago(30d) 
+| where  (Repo has 'k8s' or Repo has 'kubernetes')
+| extend name=tostring(Repo.name)
+| distinct name
+
+
+
+// Count distinct works very fast 
+//in terms of performace if there is often used nested attribute we recommend to put it outside as a separate field with extend operator
+EventsAll
+| where CreatedAt > ago(90d)
+| extend name=tostring(Repo.name)
+| distinct name
+| count 
+
+// create bins on timeline and chart it. Looks like COVID19 helped to produce more work 
+EventsAll
+| where CreatedAt > ago(1200d)
+| summarize count() by bin(CreatedAt, 1d)
+| render timechart 
+
+
+//compound summarize by event type
+EventsAll
+| where CreatedAt > ago(1200d)
+| summarize count() by bin(CreatedAt, 1d), Type
+| render timechart 
+
+// =====================================================ADVANCED OPERATORS ======================================================================
+
+EventsAll
+| project Repo, RepoName=Repo.name
+| take 10
+
+// string parsing 
+EventsAll
+| project Repo, RepoName=Repo.name
+| parse RepoName with Area "/" Project
+| take 10
+
+
+//Azure projects examples
+EventsAll
+| where Repo has 'Azure'
+| project Repo, RepoName=Repo.name
+| parse RepoName with Area "/" Project
+| where Area == 'Azure'
+| take 10
+
+
+//Top projects in Azure
+EventsAll
+| where Repo has 'Azure'
+| project Repo, RepoName=Repo.name
+| parse RepoName with Area "/" Project
+| summarize Projects = dcount(Project) by Area
+| top 30 by Projects
+
+
+// most popular in terms of number of PushEvents.. mostly bots
+EventsAll
+| where Type == 'PushEvent' and CreatedAt > ago(60d)
+| summarize count() by name = tolower(tostring(Repo.name))
+| top 30 by count_
+
+
+// percetile of push events in last 60 days. You can see that most of repos are idle
+EventsAll
+| where Type == 'PushEvent' and CreatedAt > ago(60d)
+| summarize count() by name = tolower(tostring(Repo.name))
+| summarize percentiles(count_,20,50,70,90,99)
+
+//Showing the top popular repos by WatchEvent.. let's what are most popular technologies / repos
+//peple select watch after a repo
+// the first is funny :)))
+//there are alot of learning resoures.. a lot, not everything is programming
+EventsAll
+| where Type == 'WatchEvent'
+| summarize WatchEvents = count() by RepoName=tolower(tostring(Repo.name))
+| top 30 by WatchEvents
+
+// ================================================ Joins=====================================================
+//Let's focus only on coding Projects
+let watchedRepos = 
+   EventsAll  
+    |where Type == 'WatchEvent'
+    |extend RepoName = tolower((tostring(Repo.name)))
+    |summarize hint.shufflekey=RepoName WatchEvents=count() by RepoName
+    |where WatchEvents > 100;
+ let issuesRepos =
+   EventsAll
+    |where Type in ("IssueCommentEvent", "IssuesEvent")
+    |extend RepoName = tolower((tostring(Repo.name)))
+    |summarize hint.shufflekey=RepoName IssuesEvents = count() by RepoName;
+watchedRepos
+| join  hint.shufflekey=RepoName (issuesRepos) on RepoName
+| extend Popularity = (WatchEvents * 0.2) + (IssuesEvents * 0.8)
+| top 20 by Popularity
+| project  RepoName,Popularity
+| render barchart    
+      
+

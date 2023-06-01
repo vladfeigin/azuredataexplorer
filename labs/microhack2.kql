@@ -1,0 +1,208 @@
+﻿
+
+logisticstelemetry
+| getschema 
+
+logisticstelemetry
+| take 5
+
+logisticstelemetry
+| project telemetry
+|take 2
+
+
+logisticstelemetry
+| parse telemetry with * ",\"LostTags\":" LostTags:long * ",\"TotalTags\":" TotalTags:long *
+| project LostTags,TotalTags
+| take 10
+
+
+logisticstelemetry
+| parse telemetry with * ",\"LostTags\":" LostTags:long * ",\"TotalTags\":" TotalTags:long * 
+| project deviceId, enqueuedTime, LostTags, TotalTags, Temp 
+| extend NumOfTagsCalculated = TotalTags - LostTags
+| take 10
+
+// extend NumOfTagsCalculated = TotalTags - LostTags
+//( deviceId:string, enqueuedTime:datetime, NumOfTagsCalculated:int, Temp:real)
+
+logisticstelemetry
+| parse telemetry with * ",\"LostTags\":" LostTags:long * ",\"TotalTags\":" TotalTags:long * 
+| project deviceId, enqueuedTime, NumOfTagsCalculated = (TotalTags-LostTags), Temp 
+| take 10
+
+.create table LogisticsTelemetryManipulated  (deviceId:string, enqueuedTime:datetime, NumOfTagsCalculated:long, Temp:real) 
+
+.create-or-alter function ManipulateLogisticsTelemetryData()
+{ 
+logisticstelemetry
+| parse telemetry with * ",\"LostTags\":" LostTags:long * ",\"TotalTags\":" TotalTags:long * 
+| project deviceId, enqueuedTime, NumOfTagsCalculated = (TotalTags-LostTags), Temp 
+} 
+
+.alter table LogisticsTelemetryManipulated policy update 
+@'[{ "IsEnabled": true, "Source": "logistic", "Query": "ManipulateLogisticsTelemetryData()", "IsTransactional": true, "PropagateIngestionProperties": true}]'
+
+.show table LogisticsTelemetryManipulated policy update
+
+LogisticsTelemetryManipulated
+| take 10
+
+
+// challenge 5
+// list of 10 device id with highest Shock
+logisticstelemetry
+| take 5
+
+logisticstelemetry
+|summarize maxShock =max(Shock)
+
+//challenge #5
+//task 1
+
+let listMaxShock = 
+logisticstelemetry
+| sort by Shock desc 
+| project deviceId
+| take 10;
+//listMaxShock
+logisticstelemetry
+| where deviceId  in (listMaxShock )
+| summarize avg(Temp)
+
+//Task2
+logisticstelemetry
+| summarize count() by bin(enqueuedTime, 10m), TransportationMode
+| render timechart
+
+//Task3
+// top 10 by name is equivalen to sort by name | take 10
+logisticstelemetry
+| where enqueuedTime > ago(90d)
+| top 10 by Temp
+| project Location_lon,Location_lat
+| render scatterchart with (kind = map)
+
+// Task 4
+range MyNumbers from 1 to 8 step 2
+range LastWeek from ago(7d) to now() step 1d
+
+//Task5
+let min_t = (toscalar(logistic | summarize min(enqueuedTime)));
+let max_t = (toscalar(logistic | summarize max(enqueuedTime)));
+let step_interval = 10m;
+logistic
+| make-series avg_shock_series=avg(Shock) on (enqueuedTime) from (min_t) to (max_t) step step_interval 
+| extend anomalies_flags = series_decompose_anomalies(avg_shock_series, 1) 
+| render anomalychart  with(anomalycolumns=anomalies_flags, title='avg shock anomalies') 
+
+
+//Task6
+nytaxi
+| take 5
+
+nytaxi
+| count 
+
+let min_tt = (toscalar(nytaxi | summarize min(tpep_pickup_datetime)));
+let max_tt = (toscalar(nytaxi | summarize max(tpep_pickup_datetime)));
+let step_interval = 10m;
+nytaxi
+| make-series avg_tip_series=avg(tip_amount) on (tpep_pickup_datetime) from (min_tt) to (max_tt) step step_interval
+| extend anomalies_flags = series_decompose_anomalies(avg_tip_series, 1) 
+| render anomalychart  with(anomalycolumns=anomalies_flags, title='avg tip anomalies') 
+
+
+//payment type - task6
+nytaxi
+| summarize count() by tostring(payment_type)
+| render  piechart 
+
+//Task 7
+nytaxi
+| extend dow =  toint( (format_timespan(dayofweek(tpep_pickup_datetime), 'd')) )+1
+| summarize count() by dow
+| render columnchart 
+
+// check 
+nytaxi
+| extend dow = dayofweek(tpep_pickup_datetime)
+| summarize count() by bin (dow, 1d)
+| render columnchart 
+
+//Task 8 ???
+nytaxi
+| where tpep_pickup_datetime between (datetime(2021-07-01) .. datetime(2021-07-31) )
+| where passenger_count  <= 4
+| summarize avg(tip_amount) by passenger_count, format_datetime(tpep_pickup_datetime, 'y-M-d') 
+| render linechart 
+
+//not this one
+nytaxi
+| where tpep_pickup_datetime between (datetime(2021-07-01) .. datetime(2021-07-31) )
+| where passenger_count  <= 4
+| summarize avg(tip_amount) by bin (tpep_pickup_datetime, 1d)
+| render linechart  
+
+//Task 9
+nytaxi
+| make-series avg_tip_series=avg(tip_amount) on (tpep_pickup_datetime) from datetime(2021-07-01) to datetime(2021-07-31) step 1h
+| extend anomalies_flags = series_decompose_anomalies(avg_tip_series, 1) 
+| render anomalychart  with(anomalycolumns=anomalies_flags, title='avg tip anomalies') 
+
+//Task 10
+let payment_type_lookup_data = (externaldata (code:string,description:string)
+[ @"https://raw.githubusercontent.com/Azure/azure-kusto-microhack/main/assets/ExternalData/payment_type_lookup.csv" ]
+with(format="csv", ignoreFirstRecord=true))
+| project tolong(code), description;
+payment_type_lookup_data
+
+
+//Task 11 - Joins
+let payment_type_lookup_data = (externaldata (code:string,description:string)
+[ @"https://raw.githubusercontent.com/Azure/azure-kusto-microhack/main/assets/ExternalData/payment_type_lookup.csv" ]
+with(format="csv", ignoreFirstRecord=true))
+| project payment_type = tolong(code), description;
+let payments_trip_by_type = nytaxi
+| where tpep_pickup_datetime between ( datetime(2021-07-01) .. datetime(2021-07-31))
+| summarize count() by payment_type, bin ( tpep_pickup_datetime, 1d);
+payments_trip_by_type |
+  join kind=leftouter hint.shufflekey=payment_type  payment_type_lookup_data on payment_type
+
+
+
+let payment_type_lookup_data = (externaldata (code:string,description:string)
+[ @"https://raw.githubusercontent.com/Azure/azure-kusto-microhack/main/assets/ExternalData/payment_type_lookup.csv" ]
+with(format="csv", ignoreFirstRecord=true))
+| project payment_type = tolong(code), description;
+let payments_trip_by_type = srcblobtaxi
+| where tpep_pickup_datetime between ( datetime(2021-07-01) .. datetime(2021-07-31))
+| summarize count() by payment_type, bin ( tpep_pickup_datetime, 1d);
+payments_trip_by_type
+| join kind=leftouter hint.shufflekey=payment_type  payment_type_lookup_data on payment_type
+| project payment_type, description, count_, tpep_pickup_datetime
+| render timechart with (title="Trips by payment type", legend=hidden)    
+
+
+//Task 12
+let min_t = datetime(2021-07-01);
+let max_t = datetime(2021-08-07); // Note that there is no data in the first week of August. We will forecast the data for this week.
+let step_interval = 30min;
+srcblobtaxi
+| make-series number_trips_series=count() on tpep_pickup_datetime from (min_t) to (max_t) step step_interval
+| extend prediction_series = series_decompose_forecast(number_trips_series, 24*7)
+| render timechart with (title='Number of trips forecast')
+
+
+//challenge 6
+
+.export
+  async compressed
+  to csv (
+    h@"https://asastoremcw303474.blob.core.windows.net/labs-303474?sp=racwdlmo&st=2023-06-01T12:18:23Z&se=2023-06-30T20:18:23Z&spr=https&sv=2022-11-02&sr=c&sig=KG%2FeQz1eRP25OtJqpFfY5RDjIX2mCdRs%2FX4nJVGcZro%3D"
+    ) with (
+    namePrefix="export",
+    includeHeaders="all",
+    encoding ="UTF8NoBOM"
+  ) <|logisticstelemetry
+  

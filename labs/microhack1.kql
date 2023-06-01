@@ -1,0 +1,99 @@
+﻿
+
+logisticstelemetry
+| getschema 
+
+
+logisticstelemetry
+| where deviceId startswith "x"
+| take 10
+
+
+logisticstelemetry
+| where enqueuedTime > ago(20d)
+| take 10 
+
+
+logisticstelemetry
+| summarize count()
+
+
+logisticstelemetry
+| where enqueuedTime > ago(10m)
+| summarize count()
+
+
+logisticstelemetry 
+| project deviceId,enqueuedTime,Temp
+| take 5
+
+
+logisticstelemetry 
+| project deviceId,enqueuedTime,Temp
+| where enqueuedTime > ago(90d)
+| take 10
+
+
+logisticstelemetry 
+| sort by Temp desc 
+| take 10
+
+
+logisticstelemetry 
+| summarize LatestEvent=max(enqueuedTime)
+
+
+logisticstelemetry
+| summarize temp=max(Temp)
+
+
+logisticstelemetry
+| extend C_Temp = (Temp-32)* (5.0/9.0)
+| project-rename F_Temp = Temp
+| project-reorder templateId
+| take 5
+
+
+logisticstelemetry
+| summarize count()
+
+
+logisticstelemetry
+| where deviceId startswith "x"
+| summarize count()
+
+
+logisticstelemetry
+| where deviceId startswith "x"
+| summarize count() by deviceId
+
+logisticstelemetry
+| where deviceId startswith "x"
+| summarize count() by deviceId
+| render  piechart 
+
+
+logisticstelemetry
+|where enqueuedTime > ago(10d)
+|summarize count() by bin(enqueuedTime, 10m),deviceId
+| render timechart 
+
+
+logisticstelemetry
+// | where enqueuedTime > ago(10d) 
+| summarize avg(Temp) by bin(enqueuedTime, 30m)
+| render timechart
+
+
+// export data from table to file on blob
+.export
+  async compressed
+  to csv (
+    h@"<SAS Storage account url>",
+    ) with (
+    sizeLimit=100000,
+    namePrefix="export",
+    includeHeaders="all",
+    encoding ="UTF8NoBOM"
+  )
+  <|logistic

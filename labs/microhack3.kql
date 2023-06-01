@@ -1,0 +1,136 @@
+﻿logisticstelemetry
+| take 5
+
+logisticstelemetry
+| summarize arg_max(enqueuedTime,*) by deviceId
+| take 10
+
+.create materialized-view max_updated_device on table logisticstelemetry
+{
+    logisticstelemetry | summarize arg_max(enqueuedTime, *) by deviceId
+}
+
+.show materialized-views
+
+materialized_view("latest_device_values") | take 3
+
+latest_device_values
+
+#challenge7 - Task1
+
+.create async materialized-view with (backfill=true) latest_device_values on table logisticstelemetry
+{
+    logisticstelemetry
+    | summarize arg_max(enqueuedTime,*) by deviceId
+} 
+
+#challenge7 - Task2
+#Query only materialized 
+materialized_view("latest_device_values") | take 5
+#Query entire view
+latest_device_values | take 5
+
+
+#challenge7 - Task 3
+.create function 
+with (docstring = 'lists of devices starts with x', folder='microhack')
+GetAllXdevices()  {logistic | where deviceId startswith "x"}
+
+.show functions 
+
+#challenge7 Task - revalidate!
+external_table("myexttable")
+| where tolower(deviceId) startswith "x"
+| count
+
+
+#challenge 8 , Task1 
+#done in portal
+
+#challenge 8 Task2
+.show table logistic policy caching 
+.alter table logistic policy caching hot = 30d
+
+
+#challenge 8 Task3
+.alter table logistic policy caching 
+        hot = 30d,
+        hot_window = datetime(2021-01-01) .. datetime(2021-02-01)
+        
+
+#challenge 9 Task1
+.show queries
+.show commands
+.show journal
+
+.show tables details
+.show table logistic details
+
+
+
+
+#challenge 9 Task2
+.show queries
+| where User == 'vladfeigin@microsoft.com'
+| where StartedOn >= ago(7d)
+| count
+
+
+#challenge 9 Task 3
+.show journal
+| where User == 'vladfeigin@microsoft.com'
+| where Event == 'CREATE-MATERIALIZED-VIEW'
+| where EventTimestamp >= ago(1d)
+
+# or this one: 
+
+.show journal
+| where User == 'vladfeigin@microsoft.com'
+| where Event == 'CREATE-MATERIALIZED-VIEW'
+| where format_datetime( EventTimestamp, 'yyyy-MM-dd') == '2022-11-21'
+
+
+#let tdate = datetime('2022-11-19T11:08:31.7615535Z');
+#print (format_datetime (tdate, 'yyyy-MM-dd'))
+
+#challenge 9 Task 4
+.show commands
+| where StartedOn >= ago(7d)
+| where User == 'vladfeigin@microsoft.com'
+| count
+
+
+#challenge 9 Task 5
+.show tables
+| summarize totaltables = count(TableName)
+
+.show tables details 
+| extend TotalExtentSizeInMB = format_bytes(TotalExtentSize, 0, "MB")
+| extend TotalOriginalSizeInMB = format_bytes(TotalOriginalSize, 0, "MB")
+
+
+#challenge 10, Task1
+#portal only
+
+#challenge 11 Task1 
+.show table logistic principals
+
+#challenge 11 Task2
+.add database TelemetryDatabase viewers ('aaduser=idazulay@microsoft.com')
+
+#challenge 11 Task3
+
+print (current_principal())
+
+
+
+.create-or-alter function RLSForLogisticsTelemetry (){
+let IsMyPrincipal = (current_principal() == '761a2f0a-05e8-4c3c-a8ae-1ce021509723');
+LogisticsTelemetryManipulated | where (IsMyPrincipal);
+}
+
+
+.alter table logistic policy row_level_security enable "RLSForLogisticsTelemetry"
+
+logistic
+| count 
